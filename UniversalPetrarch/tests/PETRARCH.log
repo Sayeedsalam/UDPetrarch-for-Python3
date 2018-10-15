@@ -1,0 +1,12 @@
+INFO 2018-08-07 16:35:02,659: Running
+INFO 2018-08-07 16:35:02,659: Using default config file.
+INFO 2018-08-07 16:35:02,659: Config path: /Users/sxs149331/PycharmProjects/UniversalPetrarch-master/UniversalPetrarch/data/config/PETR_config.ini
+INFO 2018-08-07 16:35:02,663: Reading PETR.Internal.Coding.Ontology.txt
+INFO 2018-08-07 16:35:02,666: Reading CAMEO.2.0.txt
+INFO 2018-08-07 16:35:06,129: Reading Phoenix.agents.txt
+
+WARNING 2018-08-07 16:35:06,159: Codes are required for agents in .agents file ; line skipped
+INFO 2018-08-07 16:35:06,164: Reading Phoenix.discards.txt
+INFO 2018-08-07 16:35:06,169: Reading Phoenix.IssueCoding.txt
+INFO 2018-08-07 16:35:06,225: Hitting read events...
+INFO 2018-08-07 16:35:06,226: Hitting do_coding
