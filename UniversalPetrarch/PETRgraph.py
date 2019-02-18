@@ -24,6 +24,9 @@ class NounPhrase:
         self.prep_phrase = []
         self.compound_modifier = False
 
+    def __str__(self):
+        return self.text
+
     def get_meaning(self):
         logger = logging.getLogger('petr_log.NPgetmeaning')
         def get_meaning_from_core_noun_phrase(relations, both):
@@ -564,15 +567,15 @@ An instantiated Sentence object
 
     def str_to_graph(self, str):
         dpgraph = nx.DiGraph()
-        print "Parse before split: ", self.parse
+        #print "Parse before split: ", self.parse
         parsed = self.parse.split("\n")
-        print "Parse after split: ", parsed
+        #print "Parse after split: ", parsed
 
         dpgraph.add_node(0, token='ROOT', pos='ROOT', lemma='ROOT')
         for p in parsed:
             temp = p.strip().split("\t")
 
-            print(temp)
+            #print(temp)
             if len(temp) == 1:
                 continue
             dpgraph.add_node(int(temp[0]), token=temp[

@@ -294,7 +294,7 @@ def do_coding(event_dict):
         prev_code = []
 
         SkipStory = False
-        print('\n\nProcessing story {}'.format(key))
+        #print('\n\nProcessing story {}'.format(key))
 
         StoryDate = event_dict[key]['meta']['date']
         for sent in val['sents']:
@@ -310,7 +310,7 @@ def do_coding(event_dict):
                     'date'] if 'date' in event_dict[key]['sents'][sent] else StoryDate
                 Date = PETRreader.dstr_to_ordate(SentenceDate)
 
-                print("\n", SentenceID)
+                #print("\n", SentenceID)
                 parsed = event_dict[key]['sents'][sent]['parsed']
                 treestr = parsed
 
@@ -411,22 +411,22 @@ def do_coding(event_dict):
         if SkipStory:
             event_dict[key]['sents'] = None
 
-    print("\nSummary:")
-    print(
-        "Stories read:",
-        NStory,
-        "   Sentences coded:",
-        NSent,
-        "  Events generated:",
-        NEvents)
-    print(
-        "Discards:  Sentence",
-        NDiscardSent,
-        "  Story",
-        NDiscardStory,
-        "  Sentences without events:",
-        NEmpty)
-    print("Average Coding time = ", times / sents if sents else 0)
+    # print("\nSummary:")
+    # print(
+    #     "Stories read:",
+    #     NStory,
+    #     "   Sentences coded:",
+    #     NSent,
+    #     "  Events generated:",
+    #     NEvents)
+    # print(
+    #     "Discards:  Sentence",
+    #     NDiscardSent,
+    #     "  Story",
+    #     NDiscardStory,
+    #     "  Sentences without events:",
+    #     NEmpty)
+    # print("Average Coding time = ", times / sents if sents else 0)
 # --    print('DC-exit:',event_dict)
 
     return event_dict

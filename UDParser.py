@@ -27,7 +27,9 @@ class UDParser(object):
     model = None
 
     def __init__(self, lang="en"):
-        self.model = Model.load("/Users/sxs149331/PycharmProjects/UniversalPetrarch-master/UniversalPetrarch/preprocessing/udpipe-1.2.0/model/spanish-ancora-ud-2.0-170801.udpipe")
+        model_file = "/Users/sxs149331/PycharmProjects/UniversalPetrarch-master/"+self.models[lang]
+        print model_file
+        self.model = Model.load(model_file)
         if not self.model:
             sys.stderr.write("Model Loading Failed")
             sys.exit(1)

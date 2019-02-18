@@ -323,13 +323,13 @@ def read_dict(corenlp_dict):
 
         for sentence in article['sentences']:
             sent_id = sentence['sentence_id']
-            print(sent_id)
+            #print(sent_id)
             counter = counter + 1
-            print(counter)
+            #print(counter)
             if counter == sentence_limit:
                 break  # read only the first 7 sentences of a article
             parsed_text = sentence['parse_sentence']
-            print(parsed_text)
+            #print(parsed_text)
             sent_dict[sent_id] = {'content': sentence['sentence'], 'parsed':
                 parsed_text}
             print(counter)

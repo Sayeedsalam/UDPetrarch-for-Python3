@@ -1,6 +1,7 @@
 import json
 from UDParser import UDParser
 from UniversalPetrarch.EventCoder import EventCoder
+from pprint import pprint
 
 parser = UDParser()
 event_coder = EventCoder()
@@ -32,10 +33,17 @@ def create_dummy_article(sentence):
 def encode_sentence(sentence):
     article = create_dummy_article(sentence)
     article = parse_ud(article)
-    print article
-    return event_coder.encode_dict(article)
+    pprint(article)
+    #print article
+    events = event_coder.encode_dict(article)
+    if events is not None and 'events' in events['dummy_001']['sents'][1]:
+        return events['dummy_001']['sents'][1]
+    else:
+        return {}
 
 
 
-print encode_sentence("Ukraine ratified a sweeping agreement with the European Union on Tuesday.")
-
+event_dict = encode_sentence("The European Union or individual States must not take over from economic operators, but public authorities must define the rules and objectives which enable the economy to develop in a sustainable fashion.")
+pprint(event_dict)
+for key in event_dict['triplets']:
+    print event_dict['triplets'][key]["triple"][0].text
