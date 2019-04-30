@@ -1,14 +1,7 @@
-from kafka import KafkaConsumer
-from kafka import KafkaProducer
 from UniversalPetrarch.EventCoder import EventCoder
-from pymongo import MongoClient
-#from petrarch2 import PETRwriter
-import urllib
 import json
-from bson import ObjectId
+
 from PhoenixConverter import PhoenixConverter
-from kafka.client import SimpleClient
-from kafka.producer.simple import SimpleProducer
 
 from PetrarchFormatter import PetrarchFormatter
 from UDParser import UDParser

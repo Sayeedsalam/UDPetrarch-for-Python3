@@ -504,6 +504,9 @@ class VerbPhrase:
         self.passive = False
         self.negative = False
 
+    def __str__(self):
+        return self.text
+
 class Sentence:
     """
 Holds the information of a sentence and its dependency tree.
