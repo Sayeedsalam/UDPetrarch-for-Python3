@@ -16,6 +16,7 @@ import pickle
 
 
 
+
 parser = UDParser(lang="es")
 
 print parser.parse("Ucrania ratificó un acuerdo radical con la Unión Europea el martes.")

@@ -1,12 +1,20 @@
 # -*- coding: utf-8 -*-
+from __future__ import print_function
+from __future__ import unicode_literals
+
 import networkx as nx
-import PETRglobals
-import PETRreader
+from UniversalPetrarch import PETRglobals
+from UniversalPetrarch import PETRreader
 import logging
-import utilities
+from UniversalPetrarch import utilities
 import sys
 if sys.version[0] == '2':
     from sets import Set
+
+try:
+    basestring
+except:
+    basestring = str
 
 
 class NounPhrase:
@@ -23,9 +31,7 @@ class NounPhrase:
         self.matched_txt = None
         self.prep_phrase = []
         self.compound_modifier = False
-
-    def __str__(self):
-        return self.text
+        self.compound_modifiers = {}
 
     def get_meaning(self):
         logger = logging.getLogger('petr_log.NPgetmeaning')
@@ -56,18 +62,52 @@ class NounPhrase:
             npMainTextIds.sort()
             npMainTokens = []
 
-            for npID in npMainTextIds: #range(npMainTextIds[0], min(npMainTextIds[-1], self.npIDs[-1]) + 1):
-                npMainTokens.append(self.sentence.udgraph.node[npID]['token'])
+            npcompTokens = []
+            if self.compound_modifier:
+                compound_mods = []
+                for mod in self.compound_modifiers.values():
+                    for m in mod:
+                        compound_mods.extend(m)
+                #print(compound_mods)
+
+                for npID in npMainTextIds:
+                    if npID not in compound_mods:
+                        npMainTokens.append(self.sentence.udgraph.node[npID]['token'])
+                    
+                for mhead,cmod in self.compound_modifiers.items():
+                    if mhead in npMainTextIds:
+                        for m in cmod:
+                            npcompToken = [self.sentence.udgraph.node[t]['token'] for t in m]
+                            npcompTokens.append(npcompToken)
+                            #print("npcompToken:",npcompToken)
+            else:
+
+                for npID in npMainTextIds: #range(npMainTextIds[0], min(npMainTextIds[-1], self.npIDs[-1]) + 1):
+                    npMainTokens.append(self.sentence.udgraph.node[npID]['token'])
+
             npMainText = (" ").join(npMainTokens)
-
-
             logger.debug("npMainText:" + npMainText+" found_compound:"+ str(self.compound_modifier))
+            
+            #input("")
+
             codes, roots, matched_txt = self.textMatching(npMainText.upper().split(" "))
             actorcodes, agentcodes = self.resolve_codes(codes, matched_txt)
 
+            #print(codes)
+            #print("matched_txt:",matched_txt)
+
+            compound_mods_code = []
+            for ccomp in npcompTokens:
+                ccomptext = (" ").join(ccomp)
+                compcodes,comproots, compmatched_txt = self.textMatching(ccomptext.upper().split(" "))
+                cactorcodes, cagentcodes = self.resolve_codes(compcodes, compmatched_txt)
+                compfullcode = self.mix_codes(cagentcodes, cactorcodes)
+                #print("ccomptext:",ccomptext,compfullcode,compmatched_txt)
+                compound_mods_code.append((compfullcode,compmatched_txt))
+
             if (both and actorcodes and agentcodes) or (not both and (actorcodes or agentcodes)):
                 # if both actor and agent are found, return the code
-                return codes, roots, matched_txt
+                return codes, roots, matched_txt,compound_mods_code
 
             return False
 
@@ -91,10 +131,15 @@ class NounPhrase:
             main_matched.append(noun_matched)
 
         if len(main_matched)==1:
-            codes, roots, matched_txt = main_matched[0]
+            codes, roots, matched_txt, compound_mods_code = main_matched[0]
             actorcodes, agentcodes = self.resolve_codes(codes, matched_txt)
             self.meaning = self.mix_codes(agentcodes, actorcodes)
             self.matched_txt = matched_txt
+
+            for compmod_code in compound_mods_code:
+                self.meaning.extend(compmod_code[0])
+                self.matched_txt.extend(compmod_code[1])
+
             logger.debug("npMainText meaning:" + (",").join(self.meaning))
             return codes, roots, matched_txt
         elif len(main_matched)==2:
@@ -102,13 +147,18 @@ class NounPhrase:
             #if true, return codes from main part 2
             containsall = all(m in main_matched[1][2] for m in main_matched[0][2])
             if containsall:
-                codes, roots, matched_txt = main_matched[1]
+                codes, roots, matched_txt, compound_mods_code = main_matched[1]
             else:
-                codes, roots, matched_txt = main_matched[0]
+                codes, roots, matched_txt, compound_mods_code = main_matched[0]
 
             actorcodes, agentcodes = self.resolve_codes(codes, matched_txt)
             self.meaning = self.mix_codes(agentcodes, actorcodes)
             self.matched_txt = matched_txt
+
+            for compmod_code in compound_mods_code:
+                self.meaning.extend(compmod_code[0])
+                self.matched_txt.extend(compmod_code[1])
+
             logger.debug("npMainText meaning:" + (",").join(self.meaning))
             return codes, roots, matched_txt
 
@@ -268,7 +318,7 @@ class NounPhrase:
                     if matched in agent:
                         exist = True
 
-                        if len(matched) > agent:
+                        if len(matched) > len(agent):
                             existagents[j] = matched
                             agentcodes[j] = code
 
@@ -282,6 +332,8 @@ class NounPhrase:
 
         actorcodes = list(set(actorcodes))
         agentcodes = list(set(agentcodes))
+        actorcodes.sort()
+        agentcodes.sort()
         return actorcodes, agentcodes
 
     def mix_codes(self, agents, actors):
@@ -315,15 +367,53 @@ class NounPhrase:
 
         codes = set()
         actors = actors if actors else ['~']
+        #Deduplicate extracted actors:
+        uniq_actors = []
+        for ac in actors:
+            found_in_other = False
+            for oac in actors:
+                if ac != oac and ac in oac:
+                    found_in_other = True
+            if not found_in_other:
+                uniq_actors.append(ac)
+        #print("uniq_actors:",uniq_actors)
+        actors = uniq_actors
+        #print("actors:",actors)
+
+        #Deduplicate extracted agents:
+        #1. remove a agent if it is part of another agent
+        # e.g. [~CHR, ~CHRCTH] remove ~CHR
+        #2. remove a agent if it is part of the actor code 
+        uniq_agents = []
         for ag in agents:
-            if ag == '~PPL' and len(agents) > 1:
+            found_in_other = False
+            for oag in agents:
+                if ag != oag and ag in oag:
+                    #print("ag:",ag,"oag:",oag)
+                    found_in_other = True
+
+            for actor in actors:
+                temp = ag.replace("~","")
+                if temp in actor:
+                    found_in_other = True
+
+            if not found_in_other:
+                uniq_agents.append(ag)
+
+        for ag in uniq_agents:
+            if ag == '~PPL' and len(uniq_agents) > 1:
                 continue
         #            actors = map( lambda a : mix( a[0], ag[1:]), actors)
-            actors = map(lambda a: mix(a, ag), actors)
+            actors = [mix(a, ag) for a in actors]
 
         # --        print('mc-1',actors)
         for code in filter(lambda a: a not in ['', '~', '~~', None], actors):
             codes.add(code)
+
+        #print("agents:",agents)
+        #print("unique agents:",uniq_agents)
+        #print("codes:",codes)
+        #input(" ")
         return list(codes)
 
         # 16.04.25 hmmm, this is either a construct of utterly phenomenal
@@ -438,16 +528,16 @@ class NounPhrase:
                 nodatecode = j[0]
             elif len(date) == 1:
                 if date[0][0] == '<':
-                    if curdate <= int(date[0][1:]):
+                    if int(curdate) <= int(date[0][1:]):
                         code = j[0]
                         matched_code.append(j)
                 else:
-                    if curdate >= int(date[0][1:]):
+                    if int(curdate) >= int(date[0][1:]):
                         code = j[0]
                         matched_code.append(j)
             else:
-                if curdate <= int(date[1]):
-                    if curdate >= int(date[0]):
+                if int(curdate) <= int(date[1]):
+                    if int(curdate) >= int(date[0]):
                         code = j[0]
                         matched_code.append(j)
 
@@ -503,9 +593,6 @@ class VerbPhrase:
         self.code = None
         self.passive = False
         self.negative = False
-
-    def __str__(self):
-        return self.text
 
 class Sentence:
     """
@@ -570,19 +657,25 @@ An instantiated Sentence object
 
     def str_to_graph(self, str):
         dpgraph = nx.DiGraph()
-        #print "Parse before split: ", self.parse
         parsed = self.parse.split("\n")
-        #print "Parse after split: ", parsed
+        # print(parsed)
 
-        dpgraph.add_node(0, token='ROOT', pos='ROOT', lemma='ROOT')
+        dpgraph.add_node(0, token='ROOT', pos='ROOT', lemma='ROOT', feature='')
         for p in parsed:
             temp = p.strip().split("\t")
 
-            #print(temp)
+
+            if "-" in temp[0]:
+                #skip line in Spanish 
+                #for example: parser split word "haberse" into "haber" and "se", line "24-25 haberse ...." is skipped
+                #24-25  haberse _   _   _   _   _   _   _   _
+                #24  haber   haber   AUX AUX VerbForm=Inf    26  aux _   _
+                #25  se  él  PRON    PRON    Person=3    26  obj _   _
+                continue
             if len(temp) == 1:
                 continue
-            dpgraph.add_node(int(temp[0]), token=temp[
-                             1], pos=temp[3], lemma=temp[2])
+            # print(temp)
+            dpgraph.add_node(int(temp[0]), token=temp[1], pos=temp[3], lemma=temp[2], feature=temp[5])
             dpgraph.add_edge(int(temp[6]), int(temp[0]), relation=temp[7])
 
         return dpgraph
@@ -653,6 +746,7 @@ An instantiated Sentence object
         npIDs = []
         prep_phrase = []
         found_compound_modifier = False
+        compound_mod_head = []
 
         if(self.udgraph.node[nounhead]['pos'] in ['NOUN', 'ADJ', 'PROPN','ADV']):
             allsuccessors = nx.dfs_successors(self.udgraph, nounhead)
@@ -712,16 +806,48 @@ An instantiated Sentence object
                                 for nmodchild in allsuccessors[child]:
                                     if self.udgraph[child][nmodchild]['relation'] in ['conj'] and self.udgraph.node[nmodchild]['pos'] in ['NOUN', 'PROPN']:
                                         found_compound_modifier = True
+                                        compound_mod_head.append((child,nmodchild))
+                                        #print("compound modifier:",nmodchild,self.udgraph.node[nmodchild])
+
 
 
                 parents = temp
-                                               
+                                   
 
         #print(found_compound_modifier)
+
+        compound_mods = {}
+        for nhead, chead in compound_mod_head:
+            tids = []
+            tids.append(chead)
+
+            parents = [chead]
+            while len(parents) > 0:
+                temp = []
+                for parent in parents:
+                    if parent in allsuccessors.keys():
+                        for child in allsuccessors[parent]:
+                            temp.append(child)
+                            tids.append(child)
+                parents = temp
+
+            tids = list(set(tids))
+
+            tokens = [self.udgraph.node[tid]['token'] for tid in tids]
+            #print("compound_mod:",tids,tokens)
+            if nhead in compound_mods:
+                compound_mods[nhead].append(tids)
+            else:
+                compound_mods[nhead] = []
+                compound_mods[nhead].append(tids)
+
+
+
+
         npIDs.append(nounhead)
         npTokens = []
         npIDs.sort()
-        # print(npIDs)
+        #print(npIDs)
         if self.udgraph.node[npIDs[0]]['pos'] == 'ADP':
             npIDs = npIDs[1:]
         for npID in npIDs:
@@ -733,6 +859,7 @@ An instantiated Sentence object
         np.text = nounPhrasetext
         np.head = self.udgraph.node[nounhead]['token']
         np.compound_modifier = found_compound_modifier
+        np.compound_modifiers = compound_mods
 
         logger.debug("noun:" + nounPhrasetext)
         for pp in prep_phrase:
@@ -745,7 +872,7 @@ An instantiated Sentence object
             pphrase.text = pptext
             np.prep_phrase.append(pphrase)
 
-            logger.debug(pptext)
+            logger.debug("PP:" + pptext)
 
         return np
 
@@ -954,6 +1081,20 @@ An instantiated Sentence object
         vp.rawtext = (' ').join(vpTokensraw)
         vp.head = self.udgraph.node[verbhead]['lemma']
 
+        for successor in self.udgraph.successors(verbhead):
+            if self.udgraph[verbhead][successor]['relation'] in ['nsubjpass','nsubj:pass']:
+                vp.passive = True
+                
+        #for Spanish: check if the sentence is in passive voice
+        for successor in self.udgraph.successors(verbhead):
+            sucnode = self.udgraph[verbhead][successor]
+            if sucnode['relation'] in ['aux'] and self.udgraph.node[successor]['lemma'] == "ser" and "Tense=Past|VerbForm=Part" in self.udgraph.node[verbhead]['feature']:
+                vp.passive = True
+                #print(self.ID)
+                #print(vp.text)
+                #print(vp.passive)
+                #input(" ")
+
         return vp
 
     def get_source_target(self, verbIDs):
@@ -1001,6 +1142,7 @@ An instantiated Sentence object
                         if self.udgraph[verbID][successor]['relation'] in ['nsubjpass','nsubj:pass']:
                             self.verbs[verbID].passive = True
                             #print(self.verbs[verbID].passive)
+                            #input(" ")
 
                     elif(self.udgraph[verbID][successor]['relation'] in ['nmod','obl','advmod']):
                         # othernoun.append(self.get_nounPharse(successor))
@@ -1080,9 +1222,12 @@ An instantiated Sentence object
                 #raw_input(self.verbs[verb.headID].text+" "+str(self.verbs[verb.headID].passive))
 
                 # check for conjuncting verbs
-                predecessors = self.udgraph.predecessors(verb.headID)
+                predecessors = list(self.udgraph.predecessors(verb.headID))
                 for predecessor in predecessors:
-                    if 'relation' in self.udgraph[predecessor][verb.headID] and self.udgraph[predecessor][verb.headID]['relation'] in ['conj'] and self.udgraph.node[predecessor]['pos'] == 'VERB':
+                    if 'relation' in self.udgraph[predecessor][verb.headID] and \
+                    self.udgraph[predecessor][verb.headID]['relation'] in ['conj'] and \
+                    'pos' in self.udgraph.node[predecessor] and \
+                    self.udgraph.node[predecessor]['pos'] == 'VERB':
                         logger.debug("found conj verb:" +self.udgraph.node[predecessor]['token'])
                         conjverb = self.get_verbPhrase(predecessor)
                         logger.debug("extracting verb:" + conjverb.text)
@@ -1108,7 +1253,7 @@ An instantiated Sentence object
                             source.extend(ptarget)
                         elif len(psource) > 0:
                             source.extend(psource)
-                        #raw_input("find xcomp relation")
+                        #input("find xcomp relation")
 
                 # find targets from the subjects of subordinate clause
                 for successor in self.udgraph.successors(verb.headID):
@@ -1129,6 +1274,7 @@ An instantiated Sentence object
                                                                               successor])
                         if len(ssource) > 0:
                             target.extend(ssource)
+                        #input()
 
                 #for t in target: print(t)
                 if len(source) == 0 and len(target) > 0:
@@ -1660,7 +1806,7 @@ An instantiated Sentence object
                 fulltargetmatch,_ = match_noun(path, fulltarget)
                 if not isinstance(fulltargetmatch, tuple) and fulltargetmatch:
                     #print("full target match")
-                    #raw_input(fulltargetmatch)
+                    #input(fulltargetmatch)
                     return fulltargetmatch
 
             return False
@@ -1713,7 +1859,7 @@ An instantiated Sentence object
         target = triple[1]
         verb = triple[2]
 
-        #print('-' if isinstance(source, basestring) else source.text, '-' if isinstance(target, basestring) else target.text, verb.text)
+        #print('-' if isinstance(source, str) else source.text, '-' if isinstance(target, str) else target.text, verb.text)
 
         '''get code from verb dictionary'''
         logger.debug("finding code of verb:" + verb.text)
@@ -1722,6 +1868,7 @@ An instantiated Sentence object
         verbDictPath = verbDictionary
         code = None
         meaning = None
+        matched_line = None
         matched_txt = []
 
         codes = []
@@ -1772,11 +1919,14 @@ An instantiated Sentence object
                             # tempverbDictPath['#']['#']['meaning']
                             code = item['code']
                             meaning = item['meaning']
+                            matched_line = item['line']
 
-                            if (code != None and meaning != None):
-                                codes.append(code)
-                                meanings.append(meaning)
-                                matched_txts.append(matched_txt)
+                            #if (code != None and meaning != None):
+                            #    codes.append(code)
+                            #    meanings.append(meaning)
+                                #matched_txts.append(matched_txt)
+                            #   matched_txts.append(matched_line)
+
                     except:
                         print("passing:" + verb.text)
                         pass
@@ -1784,17 +1934,18 @@ An instantiated Sentence object
                 if (code != None and meaning != None):
                     codes.append(code)
                     meanings.append(meaning)
-                    matched_txts.append(matched_txt)
+                    #matched_txts.append(matched_txt)
+                    matched_txts.append(matched_line)
 
         if(len(verbtokens) > 1):
             logger.debug(codes)
             logger.debug(meanings)
             logger.debug(matched_txts)
+            #input(" ")
             #raw_input("verb pharse has length large than 1")
 
         if code != None and meaning != None:
-            logger.debug(code + "\t" + meaning + "\t" + verb.text + "\t" +
-                         (" ").join(matched_txt) + "\t" + str(len(verb.vpIDs)))
+            logger.debug(code + "\t" + meaning + "\t" + verb.text + "\t" + (" ").join(matched_txts) + "\t" + str(len(verb.vpIDs)))
         else:
             logger.debug("None code and none meaning")
 
@@ -1911,9 +2062,10 @@ An instantiated Sentence object
         triple_dict = {}
         triple_dict['triple'] = newtriple
         triple_dict['verbcode'] = verbcode
-        triple_dict['matched_txt'] = matched_pattern if matched_pattern != None else (" ").join(matched_txt)
+        triple_dict['matched_txt'] = matched_pattern if matched_pattern != None else (" ").join(matched_txts)
         triple_dict['meaning'] = (",").join(meanings)
-
+        triple_dict['source_id'] = source.headID if not isinstance(source,basestring) else None
+        triple_dict['target_id'] = target.headID if not isinstance(target,basestring) else None
         #raw_input("Press Enter to continue...")
         return verbcode, triple_dict['matched_txt'],triple_dict['meaning'],tripleID, triple_dict
 
@@ -1922,7 +2074,7 @@ An instantiated Sentence object
         def resolve_synset(line):
             synsets = PETRglobals.VerbDict['synsets']
             segs = line.split()
-            syns = filter(lambda a: '&' in a, segs)
+            syns = [a for a in segs if '&' in a]
             lines = []
             words = []
             
@@ -1997,7 +2149,7 @@ An instantiated Sentence object
                 uniq_nouns[noun.npIDs[0]]=noun
 
             newtarget = None
-            for nounID in sorted(uniq_nouns.iterkeys()):
+            for nounID in sorted(list(uniq_nouns.keys())):
                 noun = uniq_nouns[nounID]
                 #print(noun.text,noun.headID,verb.headID,closest)
                 if noun.headID >= verb.headID and (noun.headID <= closest or (verb.passive and noun.text.startswith("by"))):
@@ -2130,12 +2282,16 @@ An instantiated Sentence object
                         meaning = target.mix_codes(newagentcodes, newactorcodes)
                         meaning = meaning if meaning != None else ['---']
                         target_meaning = meaning
+                        target.matched_txt = no_overlap_text
                     else:   
-                        target_meaning = ['---']          
+                        target_meaning = ['---']  
+                        triple['target_id']= None
+
 
                 elif overlap and len(target.matched_txt) == len(overlap):
                     # entire target actor is in the matched pattern
                     target_meaning = ['---']
+                    triple['target_id']= None
 
             if (target_meaning in [['---'],[]] or isinstance(target, basestring)) or (verb.passive and source_meaning in [['---'],[],'']):
                 verblist = self.metadata['othernoun'][verb.headID]
@@ -2157,10 +2313,14 @@ An instantiated Sentence object
                         source = newtarget
                         self.nouns[source.headID] = source
                         source_meaning = newtarget_meaning
+                        triple['source_id'] = source.headID
+
                     elif target_meaning in [['---'],[]] or isinstance(target, basestring):
                         target = newtarget
                         self.nouns[target.headID] = target
                         target_meaning = newtarget_meaning
+                        triple['target_id'] = target.headID
+
                         
                         #print("new target found,",target.text, target_meaning)
 
@@ -2188,7 +2348,7 @@ An instantiated Sentence object
                     nounStartEnd[noun.npIDs[0]]['noun'] = noun
                     uniq_nouns[noun.npIDs[0]]=noun
 
-                for nounID in sorted(uniq_nouns.iterkeys(),reverse=True):
+                for nounID in sorted(list(uniq_nouns.keys()),reverse=True):
                     noun = uniq_nouns[nounID]
                     if noun.headID <= verb.headID and noun.headID <= closest:
                         newsource = noun
@@ -2204,8 +2364,9 @@ An instantiated Sentence object
                     source = newsource
                     self.nouns[source.headID] = source
                     source_meaning = newsource_meaning
+                    triple['source_id'] = source.headID
                     
-            #'''
+            
             #check if verb code updates:
             newverbcode, newmatched_txt, newmeanings, _ , _ = self.get_verb_code_per_triplet((source,target,verb))
             #print(triple['verbcode'],newverbcode,newmatched_txt,newmeanings)
@@ -2213,7 +2374,7 @@ An instantiated Sentence object
                 if newverbcode not in ['---',None] and "*" in newmatched_txt and "*" not in triple['matched_txt']:
                     triple['verbcode'] = newverbcode
                     #raw_input()
-            #'''
+            
 
             if verb.headID in self.rootID and tripleID not in paired_event:
                 if verb.headID in root_eventID:
@@ -2262,6 +2423,9 @@ An instantiated Sentence object
         grandchild_verbs = {}
         transfered_rootID = []
 
+        #for key in self.triplets.keys():
+        #    print(key,self.triplets[key]['event'])
+        #input()
 
         for tripleID in sorted(self.triplets.keys(),key=sortbyverbID):
             
@@ -2298,18 +2462,24 @@ An instantiated Sentence object
                 if is_lower_verb:
 
                     current_event = triple['event']  # 4.27
-                    #(source_meaning,target_meaning,triple['verbcode'])
+                    #print(source_meaning,target_meaning,triple['verbcode'])
                     if current_event[0] == current_event[1]:
                         continue
 
                     logger.debug("root" + str(root))
                     for reventID, revent in root_event[root].items():
+
                         event_before_transfer = (
                             revent[0], current_event, revent[2])
                         if revent[0] not in ['---']:
-                            event_after_transfer = self.match_transform(
+                            event_after_transfer, transfer_pattern = self.match_transform(
                                 event_before_transfer)
                             current_eventID = tripleID
+                            triple["transfermation"] = transfer_pattern
+                            if transfer_pattern != "None":
+                                triple["before_transfer"] = event_before_transfer
+                                triple["after_transfer"] = event_after_transfer
+                                ##need update source, target ID info
 
                         elif current_event[0] and current_event[1]:
                             event_after_transfer = [current_event]
@@ -2436,49 +2606,61 @@ An instantiated Sentence object
             logger.debug("paired_event:" + tripleID)
             logger.debug(triple['event'])
             verbcode = triple['event'][2]
-            ids = tripleID.split("#")
+            verbid = tripleID.split("#")[2]
+            sourid = triple['source_id'] if triple['source_id']!= None else ""
             if verbcode not in allactors:
                 allactors[verbcode] = {}
-                allactors[verbcode]['vid'] = ids[2]
-            allactors[verbcode][ids[0]] = triple['event'][0]
+                allactors[verbcode]['vid'] = verbid
+            allactors[verbcode][sourid] = triple['event'][0]
 
         for verbcode, actors in allactors.items():
             idx = len(self.events)
             if len(actors) > 1:
                 for sid in actors.keys():
                     for tid in actors.keys():
-                        if sid != tid and sid != 'vid' and tid != 'vid':
-                            tripleID = sid + "#" + tid + "#" + \
+                        if sid != tid and sid != 'vid' and tid != 'vid' and sid != "" and tid != "":
+                            tripleID = str(sid) + "#" + str(tid) + "#" + \
                                 actors['vid'] + "#" + str(idx)
                             self.events[tripleID] = [
                                 actors[sid], actors[tid], verbcode]
                             idx = idx + 1
 
         # symmetric events, [xxx:yyy] pattern
+        before = []
+        after = {}
         for eventID, event in self.events.items(): 
             #print(event)
             if event[2] not in [None,0] and ":" in event[2]:
                 codes = event[2].split(":")
                 if codes[0]:
-                    self.events[eventID+"#s1"] = [event[0],event[1],codes[0]]
+                    after[eventID+"#s1"] = [event[0],event[1],codes[0]]
                 if codes[1]:
-                    self.events[eventID+"#s2"] = [event[1],event[0],codes[1]]
-                self.events.pop(eventID)
+                    after[eventID+"#s2"] = [event[1],event[0],codes[1]]
+                before.append(eventID)
+
+        for eventID in before:
+            if eventID in self.events:
+                del self.events[eventID] 
+
+        for eventID, event in after.items():
+            self.events[eventID] = event
 
         # remove None events
+        removed = []
         for eventID, event in self.events.items():
             if event[2] in [None, "---", "None"]:
                 #if event code is none
-                #print(event)
-                #raw_input()
-                self.events.pop(eventID)
+                #self.events.pop(eventID)
+                removed.append(eventID)
             elif event[0] in [None, ["None"],[],['---']] and event[1] in [None, ["None"],[],['---']]:
                 #if both source and target code are none
-                self.events.pop(eventID)
-            elif event[2] in ["010"]:
+                #self.events.pop(eventID)
+                removed.append(eventID)
+            #elif event[2] in ["010"]:
                 #print(event)
                 #raw_input()
-                self.events.pop(eventID)
+                #removed.append(eventID)
+                #self.events.pop(eventID)
             else:
                 if isinstance(event, tuple):
                     event = list(event)
@@ -2486,6 +2668,12 @@ An instantiated Sentence object
                     event[0] = ['---']
                 if event[1] in [None, ["None"],[],['---']]:
                     event[1] = ['---']
+                self.events[eventID] = event
+                
+        for eventID in removed:
+            if eventID in self.events:
+                del self.events[eventID]
+
 
         return self.events
 
@@ -2565,7 +2753,7 @@ An instantiated Sentence object
                 # print(eventcode)
                 # print(pdict)
                 # print(codelist)
-                masks = filter(lambda a: a in pdict, codelist)
+                masks = [a for a in codelist if a in pdict]
 
                 # print(masks)
                 logger.debug("actor:")
@@ -2656,7 +2844,7 @@ An instantiated Sentence object
                     tevent = (event[0],[event[1]],utilities.convert_code(event[2], 0))
                     transfered.append(tevent)
 
-                return transfered
+                return transfered,t[1]
             else:
                 logger.debug("no transformation is present:")
                 #c = utilities.convert_code(e[1][2])[0]
@@ -2681,14 +2869,14 @@ An instantiated Sentence object
                                 code_combined, 0))
                             logger.debug(event)
                             results.append(event)
-                        return results
+                        return results, "a ( b . Q ) P"
 
                     code_combined = utilities.combine_code(utilities.convert_code(e[2])[
                                                            0], utilities.convert_code(e[1][2])[0])
                     event = (e[0], [e[1][0]],
                              utilities.convert_code(code_combined, 0))
                     logger.debug(event)
-                    return [event]
+                    return [event],"a ( b . Q ) P"
                 #'''
                 elif e[0] and isinstance(e[1], tuple) and e[1][0] and e[1][2] and e[0] == e[1][0] and e[1][1]:
 
@@ -2702,7 +2890,7 @@ An instantiated Sentence object
                         code_combined, 0))
                     logger.debug(event)
 
-                    return [event]
+                    return [event],"a ( a b Q ) P"
                 '''
                 elif e[0] and isinstance(e[1], tuple) and not e[1][0] and e[1][2] and e[1][1]:
                     logger.debug("the event is of the form: a ( [] b Q ) P")
@@ -2738,12 +2926,12 @@ An instantiated Sentence object
 
         except Exception as ex:
             pass  # print(ex)
-        return [e]
+        return [e],"None"
 
     def filter_triplet_with_time_expression(self):
         # filter out triplet containing time expressions as target
         # only works for English now
-        timeexps = Set(['Monday', 'Tuesday', 'Wednesday',
+        timeexps = set(['Monday', 'Tuesday', 'Wednesday',
                         'Thursday', 'Friday', 'Saturday', 'Sunday'])
 
         def has_time_expression(triplet):
@@ -2759,7 +2947,7 @@ An instantiated Sentence object
         self.metadata['triplets'] = [t for t in self.metadata[
             'triplets'] if not has_time_expression(t)]
 
-    def get_upper_seq(self, kword, nouns, compound_nouns):
+    def get_upper_seq(self, kword, nouns, compound_nouns, lemma = False):
         """
         Generate the upper sequence starting from kword; Upper sequence currently
         terminated by clause boundary.
@@ -2799,34 +2987,6 @@ An instantiated Sentence object
             nounEndStart[noun.npIDs[-1]]['start'] = noun.npIDs[0]
             nounEndStart[noun.npIDs[-1]]['noun'] = noun
 
-        '''
-        for end in nounEndStart.keys():
-            start = nounEndStart[end]['start']
-            all_meanings = nounEndStart[end]['noun'].meaning
-            #print(all_meanings)
-
-            check_compound = False
-            compound_range = None
-            for compound in compound_nouns:
-                if start <= compound[0] and end >= compound[1]:
-                    check_compound = True
-                    compound_range = compound
-                    break
-
-            if check_compound:
-                meanings = []
-                for noun in nouns:
-                    if compound_range[0] <= noun.npIDs[0] and compound_range[1] >= noun.npIDs[-1]:
-                        meanings.extend(noun.meaning)
-
-                all_meanings.extend(meanings)
-
-            all_meanings = list(set(all_meanings))
-            #print(all_meanings)
-            if check_compound:
-                nounEndStart[end]['noun'].meaning = all_meanings
-        '''
-
         compoundEndStart = {} # key is end idx, value is start idx
         for compound in compound_nouns:
             compound_start = compound[0]
@@ -2860,7 +3020,11 @@ An instantiated Sentence object
                 currnoun = nounEndStart[kword]['noun']
                 # print("kword", kword, "start", nounstart)
 
-            UpperSeq.append(self.udgraph.node[kword]['token'].upper())
+            #get lemma or raw text
+            if lemma:
+                UpperSeq.append(self.udgraph.node[kword]['lemma'].upper())
+            else:
+                UpperSeq.append(self.udgraph.node[kword]['token'].upper())
             if nounmark and kword == nounstart:
                 noun_meaning_list = [
                     "---"] if currnoun.meaning == [] else currnoun.meaning
@@ -2888,7 +3052,7 @@ An instantiated Sentence object
 
         return UpperSeq
 
-    def get_lower_seq(self, kword, endtag, nouns, compound_nouns):
+    def get_lower_seq(self, kword, endtag, nouns, compound_nouns, lemma = False):
         """
         Generate the lower sequence starting from kword; lower sequence includes only
         words in the VP.
@@ -2920,6 +3084,8 @@ An instantiated Sentence object
         for start in nounStartEnd.keys():
             end = nounStartEnd[start]['end']
             all_meanings = nounStartEnd[start]['noun'].meaning
+            #print(start,end,nounStartEnd[start]['noun'].text)
+            #print(nounStartEnd[start]['noun'].compound_modifiers)
             #print(all_meanings)
 
             check_compound = False
@@ -2930,11 +3096,16 @@ An instantiated Sentence object
                     compound_range = compound
                     break
 
+            #print("compound_range:",compound_range)
             if check_compound:
                 meanings = []
                 for noun in nouns:
                     if compound_range[0] <= noun.npIDs[0] and compound_range[1] >= noun.npIDs[-1]:
-                        meanings.extend(noun.meaning)
+                        #check if noun is a compound modifier
+                        is_cm = [noun.headID in cm for cms in nounStartEnd[start]['noun'].compound_modifiers.values() for cm in cms]
+                        #print("is_cm:", is_cm)
+                        if True in is_cm:
+                            meanings.extend(noun.meaning)
 
                 all_meanings.extend(meanings)
 
@@ -2943,6 +3114,7 @@ An instantiated Sentence object
             if check_compound:
                 nounStartEnd[start]['noun'].meaning = all_meanings
                 #raw_input()
+            #input(" ")
 
         compoundStartEnd = {} # key is start idx, value is end idx
         for compound in compound_nouns:
@@ -2988,8 +3160,10 @@ An instantiated Sentence object
                 LowerSeq.append("(NE<" + str(order) + ">" + noun_meaning)
 
                 # print("kword", kword, "end", nounend)
-
-            LowerSeq.append(self.udgraph.node[kword]['token'].upper())
+            if lemma: 
+                LowerSeq.append(self.udgraph.node[kword]['lemma'].upper())
+            else:
+                LowerSeq.append(self.udgraph.node[kword]['token'].upper())
             if nounmark and kword == nounend:
                 LowerSeq.append("~NE")
 
@@ -3010,7 +3184,38 @@ An instantiated Sentence object
 
         return LowerSeq
 
-    def make_event_strings(self, CodedEv, UpperSeq, LowerSeq, SourceLoc, TargetLoc, IsPassive, EventCode, line, verbhead):
+    def extract_actorcodes_from_actorLoc(self, UpperSeq, LowerSeq, SourceLoc, TargetLoc):
+        def expand_compound_codes(codelist):
+            """
+            Expand coded compounds, that is, codes of the format XXX/YYY
+            """
+            for ka in range(len(codelist)):
+                if '/' in codelist[ka]:
+                    parts = codelist[ka].split('/')
+                    # this will insert in order, which isn't necessary but might be
+                    # helpful
+                    kb = len(parts) - 2
+                    codelist[ka] = parts[kb + 1]
+                    while kb >= 0:
+                        codelist.insert(ka, parts[kb])
+                        kb -= 1
+
+        logger = logging.getLogger('actorcodes')
+        try:
+            srccodes = self.get_loccodes(SourceLoc, UpperSeq, LowerSeq)
+            logger.debug("p1 srccodes: %s", srccodes)
+            expand_compound_codes(srccodes)
+            tarcodes = self.get_loccodes(TargetLoc, UpperSeq, LowerSeq)
+            logger.debug("p1 tarcodes: %s", tarcodes)
+            expand_compound_codes(tarcodes)
+            return srccodes,tarcodes
+        except:
+
+            logger.warning(
+                'tuple error when attempting to extract src and tar codes in make_event_strings(): {}'.format(self.ID))
+            return [],[]
+
+    def make_event_strings(self, CodedEv, UpperSeq, LowerSeq, srccodes, tarcodes, IsPassive, EventCode, line, verbhead, matchlist):
         """
         Creates the set of event strings, handing compound actors and symmetric
         events.
@@ -3042,7 +3247,7 @@ An instantiated Sentence object
             else:
                 return [fullcode, None, None]
 
-        def make_events(codessrc, codestar, codeevt, CodedEvents_, line, verbhead):
+        def make_events(codessrc, codestar, codeevt, CodedEvents_, line, verbhead, matchlist):
             """
             Create events from each combination in the actor lists except self-references
             """
@@ -3055,11 +3260,13 @@ An instantiated Sentence object
                 #    CodedEvents = []
                 #    return
                 srclist = extract_code_fields(thissrc)
+                #print("srclist:",srclist)
 
                 if srclist[0][0:3] == '---' and len(SentenceLoc) > 0:
                     # add location if known <14.09.24: this still hasn't been
                     # implemented <>
                     srclist[0] = SentenceLoc + srclist[0][3:]
+                    #print("srclist:",srclist)
                 for thistar in codestar:
                     #if '(NEC' in thistar:
                     #    logger.warning(
@@ -3067,77 +3274,71 @@ An instantiated Sentence object
                     #    CodedEvents = []
                     #    return
                     tarlist = extract_code_fields(thistar)
+                    #print("tarlist:",tarlist)
+
                     # skip self-references based on code
-                    if srclist[0] != tarlist[0]:
+                    if srclist[0] != tarlist[0] or (srclist[0] == tarlist[0] and (tarlist[0] == '---' or srclist[2] != tarlist[2])):
                         if tarlist[0][0:3] == '---' and len(SentenceLoc) > 0:
                             # add location if known -- see note above
                             tarlist[0] = SentenceLoc + tarlist[0][3:]
-                        if IsPassive:
-                            templist = srclist
-                            srclist = tarlist
-                            tarlist = templist
-                        # print(srclist[0], tarlist[0], codeevt)
+                        
                         CodedEvents.append([srclist[0], tarlist[0], codeevt])
                         if PETRglobals.WriteActorRoot:
                             CodedEvents[-1].extend([srclist[1], tarlist[1]])
                         if PETRglobals.WriteActorText:
                             CodedEvents[-1].extend([srclist[2], tarlist[2]])
+                        else:
+                            CodedEvents[-1].extend(["",""])
+
                         CodedEvents[-1].append(line)
                         CodedEvents[-1].append(verbhead)
+                        CodedEvents[-1].append(matchlist)
 
             return CodedEvents
 
-        def expand_compound_codes(codelist):
-            """
-            Expand coded compounds, that is, codes of the format XXX/YYY
-            """
-            for ka in range(len(codelist)):
-                if '/' in codelist[ka]:
-                    parts = codelist[ka].split('/')
-                    # this will insert in order, which isn't necessary but might be
-                    # helpful
-                    kb = len(parts) - 2
-                    codelist[ka] = parts[kb + 1]
-                    while kb >= 0:
-                        codelist.insert(ka, parts[kb])
-                        kb -= 1
-
-        logger = logging.getLogger('petr_log')
-        try:
-            srccodes = self.get_loccodes(
-                SourceLoc, CodedEvents, UpperSeq, LowerSeq)
-            logger.debug("srccodes: %s", srccodes)
-            expand_compound_codes(srccodes)
-            tarcodes = self.get_loccodes(
-                TargetLoc, CodedEvents, UpperSeq, LowerSeq)
-            logger.debug("tarcodes: %s", tarcodes)
-            expand_compound_codes(tarcodes)
-        except:
-
-            logger.warning(
-                'tuple error when attempting to extract src and tar codes in make_event_strings(): {}'.format(self.ID))
-            return CodedEvents
+        logger = logging.getLogger('make_events')
 
         SentenceLoc = ''
+
+        #print("srccodes:",srccodes)
+        #print("tarcodes:",tarcodes)
 
         if len(srccodes) == 0 and len(tarcodes) == 0:
             logger.debug(
                 'Empty codes in make_event_strings(): {}'.format(self.ID))
             return CodedEvents
         if ':' in EventCode:  # symmetric event
-            if srccodes[0] == '---' or tarcodes[0] == '---':
-                if tarcodes[0] == '---':
-                    tarcodes = srccodes
-                else:
-                    srccodes = tarcodes
+            #if srccodes[0] == '---' or tarcodes[0] == '---':
+            #    if tarcodes[0] == '---':
+            #        tarcodes = srccodes
+            #    else:
+            #        srccodes = tarcodes
+            
             ecodes = EventCode.partition(':')
-            CodedEvents = make_events(srccodes, tarcodes, ecodes[
-                                      0], CodedEvents, line, verbhead)
-            CodedEvents = make_events(tarcodes, srccodes, ecodes[
-                                      2], CodedEvents, line, verbhead)
+
+            for srccode in srccodes:
+                for tarcode in tarcodes:
+                    if '=' in srccode:
+                        srccode = srccode[:srccode.index("=")]
+
+                    if '=' in tarcode:
+                        tarcode = tarcode[:tarcode.index("=")]
+
+                    if srccode != '---' and tarcode != '---':
+                        #print("symmetric srccodes:",srccode)
+                        #print("symmetric tarcodes:",tarcode)
+                        #input(" ")
+
+                        CodedEvents = make_events([srccode], [tarcode], ecodes[
+                                                  0], CodedEvents, line, verbhead,matchlist)
+                        #print(CodedEvents)
+                        CodedEvents = make_events([tarcode], [srccode], ecodes[
+                                                  2], CodedEvents, line, verbhead,matchlist)
+                        #print(CodedEvents)
+                        #input(" ")
         else:
             CodedEvents = make_events(
-                srccodes, tarcodes, EventCode, CodedEvents, line, verbhead)
+                srccodes, tarcodes, EventCode, CodedEvents, line, verbhead,matchlist)
 
         if PETRglobals.RequireDyad:
             ka = 0
@@ -3169,7 +3370,7 @@ An instantiated Sentence object
 
         return CodedEvents
 
-    def get_loccodes(self, thisloc, CodedEvents, UpperSeq, LowerSeq):
+    def get_loccodes(self, thisloc, UpperSeq, LowerSeq):
         """
         Returns the list of codes from a compound, or just a single code if not compound
 
@@ -3239,6 +3440,10 @@ An instantiated Sentence object
             return codelist
 
         codelist = []
+        if len(thisloc) == 0:
+            codelist = ['---']
+            return codelist
+
         if thisloc[1]:
 
             try:
@@ -3312,12 +3517,14 @@ An instantiated Sentence object
 
         logger = logging.getLogger("petr_log.petrarch1")
         nouns, compound_nouns = self.get_all_nounPhrases()
-        # raw_input()
+        for noun in nouns:
+            self.nouns[noun.headID] = noun
 
         CodedEvents = []
+        CodedEventsMap = {} #key: verb, value: events of that verb
         SourceLoc = ""
 
-        head_verbs, conj_verbs = self.get_rootNode()
+        head_verbs, conj_verbs = self.get_rootNode() #identify the root verbs of the sentence
 
         other_verbs = []
         for node in self.udgraph.nodes(data=True):
@@ -3336,6 +3543,8 @@ An instantiated Sentence object
         verbs.extend(other_verbs)
 
         for verbID in verbs:
+            #check all verbs for matched patterns
+
             attrs = self.udgraph.node[verbID]
             
             if 'pos' in attrs and attrs['pos'] == 'VERB':
@@ -3344,18 +3553,78 @@ An instantiated Sentence object
                 verbhead = verb.head.upper()
                 logger.debug("CV-0: %s  %s", verb.text,
                              verbhead in PETRglobals.P1VerbDict['verbs'])
-                # raw_input()
-                IsPassive = False
-                for successor in self.udgraph.successors(verbID):
-                    if 'relation' in self.udgraph[verbID][successor] and self.udgraph[verbID][successor]['relation'] in ['auxpass']:
-                        IsPassive = True
-                        break
-                # raw_input(IsPassive)
+                
+                self.verbs[verbID] = verb
+
+                source, target, othernoun = self.get_source_target(verb.verbIDs)               
 
                 '''Find verb code from verb dictionary'''
+                found_verb = False;
+                temppatternlist = None;
+
+                if verbhead == "MUERTO":
+                    verbhead = "MORIR"
+
+                #handle lemma error for Spanish verbs
                 if verbhead in PETRglobals.P1VerbDict['verbs']:
+                    temppatternlist = PETRglobals.P1VerbDict['verbs'][verbhead]
+                    found_verb = True
+                elif verbhead[:-2]+"ER" in PETRglobals.P1VerbDict['verbs']:
+                    temppatternlist = PETRglobals.P1VerbDict['verbs'][verbhead[:-2]+"ER"]
+                    #input(verbhead[:-2]+"ER")
+                    found_verb = True
+                elif verbhead[:-2]+"IR" in PETRglobals.P1VerbDict['verbs']:
+                    temppatternlist = PETRglobals.P1VerbDict['verbs'][verbhead[:-2]+"IR"]
+                    #input(verbhead[:-2]+"IR")
+                    found_verb = True
+                elif verbhead[:-2]+"AR" in PETRglobals.P1VerbDict['verbs']:
+                    temppatternlist = PETRglobals.P1VerbDict['verbs'][verbhead[:-2]+"AR"]
+                    #input(verbhead[:-2]+"AR")
+                    found_verb = True
+                elif verbhead[:-1]+"ER" in PETRglobals.P1VerbDict['verbs']:
+                    temppatternlist = PETRglobals.P1VerbDict['verbs'][verbhead[:-1]+"ER"]
+                    #input(verbhead[:-1]+"ER")
+                    found_verb = True
+                elif verbhead[:-1]+"IR" in PETRglobals.P1VerbDict['verbs']:
+                    temppatternlist = PETRglobals.P1VerbDict['verbs'][verbhead[:-1]+"IR"]
+                    #input(verbhead[:-1]+"IR")
+                    found_verb = True
+                elif verbhead[:-1]+"AR" in PETRglobals.P1VerbDict['verbs']:
+                    temppatternlist = PETRglobals.P1VerbDict['verbs'][verbhead[:-1]+"AR"]
+                    #input(verbhead[:-1]+"AR")
+                    found_verb = True
+                elif verbhead[:-3]+"ER" in PETRglobals.P1VerbDict['verbs']:
+                    temppatternlist = PETRglobals.P1VerbDict['verbs'][verbhead[:-3]+"ER"]
+                    #input(verbhead[:-3]+"ER")
+                    found_verb = True
+                elif verbhead[:-3]+"IR" in PETRglobals.P1VerbDict['verbs']:
+                    temppatternlist = PETRglobals.P1VerbDict['verbs'][verbhead[:-3]+"IR"]
+                    #input(verbhead[:-3]+"IR")
+                    found_verb = True
+                elif verbhead[:-3]+"AR" in PETRglobals.P1VerbDict['verbs']:
+                    temppatternlist = PETRglobals.P1VerbDict['verbs'][verbhead[:-3]+"AR"]
+                    #input(verbhead[:-3]+"AR")
+                    found_verb = True
+                elif verbhead[:-1] in PETRglobals.P1VerbDict['verbs']:
+                    temppatternlist = PETRglobals.P1VerbDict['verbs'][verbhead[:-1]]
+                    #input(verbhead[:-1])
+                    found_verb = True
+                elif verbhead[:-2] in PETRglobals.P1VerbDict['verbs']:
+                    temppatternlist = PETRglobals.P1VerbDict['verbs'][verbhead[:-2]]
+                    #input(verbhead[:-2])
+                    found_verb = True
+                elif verbhead[:-3] in PETRglobals.P1VerbDict['verbs']:
+                    #e.g. asesinarona -> asesinar
+                    temppatternlist = PETRglobals.P1VerbDict['verbs'][verbhead[:-3]]
+                    #input(verbhead[:-3])
+                    found_verb = True
+
+
+                #if verbhead in PETRglobals.P1VerbDict['verbs']:
+                if found_verb:
                     logger.debug("CV-1 Found: %s", verb.text)
-                    patternlist = PETRglobals.P1VerbDict['verbs'][verbhead]
+                    #patternlist = PETRglobals.P1VerbDict['verbs'][verbhead]
+                    patternlist = temppatternlist
 
                     SourceLoc = ""
                     TargetLoc = ""
@@ -3364,7 +3633,7 @@ An instantiated Sentence object
 
                     verbcode = '---'
                     meaning = ''
-                    verbdata = {}
+                    verbdata = []
 
                     verb_start = verb.headID
                     verb_end = verb.headID
@@ -3374,7 +3643,7 @@ An instantiated Sentence object
                         # e.g. +MEET_WITH
                         i = verb.headID + 1
                         found_flag = True
-                        while found_flag:
+                        while found_flag and i< len(self.udgraph.node) :
                             word = self.udgraph.node[i]['lemma'].upper()
                             if word in patternlist:
                                 if '#' in patternlist[word]:
@@ -3382,22 +3651,22 @@ An instantiated Sentence object
                                     verb_end = i
                                     upper_compound = patternlist[word]['#']
                                     hasmatch = True
-                                    if not '#' in upper_compound:
-                                        raise_CheckVerbs_error(
-                                            i, "find verb code")
+                                    #if not '#' in upper_compound:
+                                    #    raise_CheckVerbs_error(i, "find verb code")
 
                                     verbdata = upper_compound['#']
                                 else:
                                     i += 1
                             else:
-                                if '#' in patternlist:
+                                if '#' in patternlist and '#' in patternlist["#"]:
                                     verbdata = patternlist['#']['#']
-                                else:
+                                #else:
                                     # No match found on the verb.
-                                    raise_CheckVerbs_error(i, "find verb code")
+                                    #raise_CheckVerbs_error(i, "find verb code")
                                 break
 
                     if not hasmatch:
+
                         if not patternlist['#'].keys() == ['#']:
                             # Compound verb, look behind
                             #e.g. RE_ADMIT
@@ -3425,77 +3694,276 @@ An instantiated Sentence object
                                 verbdata = patternlist['#']['#']
                                 hasmatch = True
 
-                    if not verbdata == {}:
-                        meaning = verbdata['meaning']
-                        verbcode = verbdata['code']
-                        line = verbdata['line']
-                        logger.debug(
-                            "CV-1 Verb Code Found:\n meaning:%s \n verbcode: %s \n line: %s", meaning, verbcode, line)
-
-                    # Find code from pattern dictionary
+                    '''Find code from pattern dictionary'''
                     if verb_start in conj_verbs.keys():
                         verb_start = conj_verbs[verb_start]
-                    upper = self.get_upper_seq(verb_start - 1, nouns, compound_nouns)
+
+                    upper = self.get_upper_seq(verb_start - 1, nouns, compound_nouns, False)
+                    upperlemma = self.get_upper_seq(verb_start - 1, nouns, compound_nouns, True)
+
                     logger.debug("Upper sequence: %s", upper)
                     lower = self.get_lower_seq(
-                        verb_end + 1, len(self.udgraph.node), nouns, compound_nouns)
+                        verb_end + 1, len(self.udgraph.node), nouns, compound_nouns, False)
+                    lowerlemma = self.get_lower_seq(
+                        verb_end + 1, len(self.udgraph.node), nouns, compound_nouns, True)
                     logger.debug("Lower sequence: %s", lower)
-                    #raw_input()
+                    #input(" ")
 
-                    if not meaning == '':
-                        patternlist = PETRglobals.P1VerbDict[
-                            'phrases'][meaning]
-                    # logger.debug("CV-2 patlist: %s", patternlist.keys())
-
-                    vpm, lowsrc, lowtar = self.petrarch1_verb_pattern_match(
-                        patternlist, upper, lower)
-                    hasmatch = False
-                    if not vpm == {}:
-                        hasmatch = True
-                        EventCode = vpm[0]['code']
-                        line = vpm[0]['line']
-                        SourceLoc = lowsrc if not lowsrc == "" else vpm[2]
-                        TargetLoc = lowtar if not lowtar == "" else vpm[1]
-
-                        logger.debug("EventCode: %s,%s,%s,%s",
-                                     EventCode, line, SourceLoc, TargetLoc)
-                    # raw_input()
-
-                    if hasmatch and EventCode == '---':
-                        hasmatch = False
-                    if not hasmatch and verbcode != '---':
+                    events_oneverb = []
+                    #if not isinstance(verbdata,list):
+                    #    input(type(verbdata))
+                    for i in range(0,len(verbdata)):
+                        meaning = verbdata[i]['meaning']
+                        verbcode = verbdata[i]['code']
+                        verbline = verbdata[i]['line']
+                        matchlist = []
                         logger.debug(
-                            "Matched on the primary verb %s, %s, %s", verbhead, meaning, line)
-                        EventCode = verbcode
-                        hasmatch = True
+                            "CV-1 Verb Code Found:\n meaning:%s \n verbcode: %s \n line: %s", meaning, verbcode, verbline)
+                        if "#" not in verb.meaning:
+                            verb.meaning = meaning+"#"
+                            verb.code = verbcode+"#"
+                        else:
+                            verb.meaning = verb.meaning + meaning +"#"
+                            verb.code = (verb.code if verb.code != None else "None") + verbcode +"#"
+                        #print("verb meaining:",verb.meaning)
+                        #print("verb.code:", verb.code)
 
-                    if hasmatch:
-                        if TargetLoc == "":
-                            TargetLoc = self.find_target(lower, TargetLoc)
+                        if not meaning == '':
+                            patternlist = PETRglobals.P1VerbDict[
+                                'phrases'][meaning]
+                        # logger.debug("CV-2 patlist: %s", patternlist.keys())
+
+                        vpm, lowsrc, lowtar, lowmatchlist = self.petrarch1_verb_pattern_match(
+                            patternlist, upperlemma, upper, lowerlemma, lower)
+                        hasmatch = False
+                        #print("vpm:",vpm)
+                        #input(" ")
+                        
+                        if not vpm == {}:
+                            hasmatch = True
+                            EventCode = vpm[0][0]['code']
+                            line = vpm[0][0]['line'] if "*" in vpm[0][0]['line'] else verbline
+                            SourceLoc = lowsrc if not lowsrc == "" else vpm[2]
+                            TargetLoc = lowtar if not lowtar == "" else vpm[1]
+                            matchlist = lowmatchlist
+                            #print("lowsrc:",lowsrc)
+                            #print("lowtar:",lowtar)
+                            #print("vpm:",vpm)
+                            logger.debug("EventCode: %s,%s,%s,%s",EventCode, line, SourceLoc, TargetLoc)
+
+                        if hasmatch and EventCode == '---':
+                            hasmatch = False
+                        if not hasmatch and verbcode != '---':
+                            line = verbline
+                            logger.debug(
+                                "Matched on the primary verb %s, %s, %s", verbhead, meaning, line)
+                            EventCode = verbcode
+                            hasmatch = True
+
+                        if hasmatch:
+
+                            if TargetLoc == "":
+                                 TargetLoc = self.find_target(lower, TargetLoc)
+                                 logger.debug("CV-3 trg %s", TargetLoc)
+
+                            if not TargetLoc == "":
+                                if SourceLoc == "":
+                                    if not TargetLoc[0] == "":
+                                        SourceLoc = self.find_source(upper, lower, SourceLoc, TargetLoc)
+                                #print("SourceLoc", SourceLoc) 
+                            
+
+                            logger.debug("CV-3 src %s", SourceLoc)
                             logger.debug("CV-3 trg %s", TargetLoc)
+                            #print("CV-3 verb passive: ",verb.passive)
+                            
+                            #print("upper:",upper)
+                            #print("lower:",lower)
+                            #input(" ")
 
-                        # print("TargetLoc", TargetLoc)
-                        if not TargetLoc == "":
-                            if SourceLoc == "":
-                                # print(upper)
-                                # print(lower)
-                                # print(TargetLoc == "")
-                                if not TargetLoc[0] == "":
-                                    SourceLoc = self.find_source(
-                                        upper, lower, SourceLoc, TargetLoc)
-                            if not SourceLoc == "":
-                                logger.debug("CV-3 src %s", SourceLoc)
-                                CodedEvents = self.make_event_strings(
-                                    CodedEvents, upper, lower, SourceLoc, TargetLoc, IsPassive, EventCode, line, verbhead)
+                            #print("sourceloc:",SourceLoc)
+                            #print("targetloc:",TargetLoc)
+                            if verb.passive and "$" not in line and "+" not in line:
+                                #if verb is in passive voice, and there is no special token in the matched pattern (e.g. "$"."+")
+                                #switch source and target
+                                tempsource = SourceLoc
+                                SourceLoc = TargetLoc
+                                TargetLoc = tempsource
 
-                                logger.debug("coded_events: %s", CodedEvents)
-                                logger.debug("line: %s", line)
-                                # for event in CodedEvents:
-                                # event.append(line)
-            if verbID not in head_verbs and CodedEvents and '---' not in [item for event in CodedEvents for item in event]:
-                break
+                            srccodes, tarcodes = self.extract_actorcodes_from_actorLoc(upper, lower, SourceLoc, TargetLoc)
+                            #print("before srccodes:",srccodes)
+                            #print("before tarcodes:",tarcodes)
 
-        # return CodedEvents,SourceLoc
+                            depsrccodes = []
+                            deptarcodes = []
+                            if TargetLoc == "" or (TargetLoc and tarcodes == ['---']) or (SourceLoc == "" or (SourceLoc and srccodes == ['---'])):
+                                ##if source or target is not found, use dependency relation to extract source or target
+                                ##todo: check overlap with matched pattern
+                                if (SourceLoc == "" or (SourceLoc and srccodes == ['---'])) and "+" not in line:
+                                    for s in source:
+                                        s.get_meaning()
+                                        s.meaning = ["---"] if s.meaning == [] else s.meaning
+                                        depsrccodes.extend([m.replace("~","---") for m in s.meaning])
+                                    #if verb.passive and "$" not in line and "+" not in line:
+                                        #tarcodes = ["---"] if depsrccodes == [] else depsrccodes
+                                    #else:
+                                    srccodes = ["---"] if depsrccodes == [] else depsrccodes
+
+                                if (TargetLoc == "" or (TargetLoc and tarcodes == ['---'])) and "$" not in line:
+                                    for t in target:
+                                        t.get_meaning()
+                                        t.meaning = ["---"] if t.meaning == [] else t.meaning
+                                        deptarcodes.extend([m.replace("~","---") for m in t.meaning])
+                                    #if verb.passive and "$" not in line and "+" not in line:
+                                    #    srccodes = ["---"] if deptarcodes == [] else deptarcodes
+                                    #else:
+                                    tarcodes = ["---"] if deptarcodes == [] else deptarcodes
+
+
+                                #print("TargetLoc:", TargetLoc)
+                                #print("SourceLoc:",SourceLoc)
+                                #print("source:",[s.text for s in source])
+                                #print("target:",[t.text for t in target])
+                                #print("othernoun:",[o.text for o in othernoun])
+
+
+                            #print("srccodes:",srccodes)
+                            #print("tarcodes:",tarcodes)
+
+                            events_oneverb = self.make_event_strings(
+                                events_oneverb, upper, lower, srccodes, tarcodes, verb.passive, EventCode, line, verbhead, matchlist)
+
+                            logger.debug("events_oneverb: %s", events_oneverb)
+                            logger.debug("line: %s", line)
+                            #input(" ")
+
+                    #'''               
+                    events_oneverb_map = {}
+                    for event in events_oneverb:
+                        eventkey = event[0]+"#"+event[1]+"#"+event[-2] #event[-2] is the matched verb
+                        if eventkey in events_oneverb_map:
+                            events_oneverb_map[eventkey].append(event)
+                        else:
+                            events_oneverb_map[eventkey] = [event]
+
+                    filtered_events_oneverb = []
+                    for evenkey, events in events_oneverb_map.items():
+                        pattern_events = []
+                        for event in events:
+                            if "*" in event[-3]:
+                                pattern_events.append(event)
+
+                        max_pattern_events = []
+                        max_pattern_length = -1
+
+                        if len(pattern_events)> 0:
+                            for pattern_event in pattern_events:
+                                if len(pattern_event[-3].split()) > max_pattern_length:
+                                    max_pattern_length = len(pattern_event[-3].split())
+                                    
+                            for pattern_event in pattern_events:
+                                #print("pattern_event:",len(pattern_event[-3].split()),pattern_event[-3])
+                                if len(pattern_event[-3].split()) == max_pattern_length:
+                                    max_pattern_events.append(pattern_event)
+                            
+                            #print("max_pattern_length:",max_pattern_length)
+                            #print("max_pattern_events:",max_pattern_events)
+                            #input(" ")
+
+                            if len(max_pattern_events)>1:
+                                #if more than one longest matched patterns, 
+                                #return the one whose matched token is closest to the verb
+                                event_map = {}
+                                for e in max_pattern_events:
+                                    etuple = (e[0],e[1])
+                                    if etuple in event_map:
+                                        event_map[etuple].append(e)
+                                    else:
+                                        event_map[etuple] = [e]
+                                #print(event_map)
+                                #input("")
+
+                                for key, events in event_map.items():
+                                    closest_pos = float("inf")
+                                    closest_evt = None
+                                    #print("key:",key)
+                                    for event in events:
+                                        #print("event:",event)
+                                        matchlist = event[-1]
+                                        matchlocs = [idx for idx in range(len(matchlist)) if matchlist[idx] != "*"]
+                                        if matchlocs and matchlocs[0]<closest_pos:
+                                            closest_pos = matchlocs[0]
+                                            closest_evt = event
+
+                                    if closest_evt != None:
+                                        filtered_events_oneverb.append(closest_evt)
+                                    else:
+                                        filtered_events_oneverb.extend(events)
+
+                                #print("filtered_events_oneverb:",filtered_events_oneverb)
+                                #print("max_pattern_events:",max_pattern_events)
+                                #input(" ")
+                            else:
+                                filtered_events_oneverb.extend(max_pattern_events)
+                        else:
+                            filtered_events_oneverb.append(events[0])
+
+                    #CodedEvents.extend(filtered_events_oneverb)
+                    CodedEventsMap[verbID] = filtered_events_oneverb
+       
+        uniq_VerbIDs = []
+        for verbID, events in CodedEventsMap.items():
+            found_in_other_pattern = False
+
+            for event in events:
+                verbhead = event[-2]
+                pattern = event[-3]
+                for overbID, oevents in CodedEventsMap.items():
+                    if overbID != verbID:
+                        for oevent in oevents:
+                            #print(oevent)
+                            opattern = oevent[-3]
+                            if verbhead in opattern:
+                                logger.debug("found verb: %s in other matched pattern %s", verbhead, opattern)
+                                #input(" ")
+                                found_in_other_pattern = True
+
+            if not found_in_other_pattern:
+                uniq_VerbIDs.append(verbID)
+                #CodedEvents.extend(events)
+        for verbID in uniq_VerbIDs:
+            events = CodedEventsMap[verbID]
+
+            furTense = False
+            if "|Tense=Fut|" in self.udgraph.node[verbID]['feature']:
+                furTense = True
+
+            if verbID not in head_verbs: 
+            #for verbs which are not root verb, add as output events only if patterns are matched
+                for event in events:
+                    if "*" in event[5]:
+                        CodedEvents.append(event)
+                #print(events)
+                #input(" ")
+            else:
+                for event in events:
+                    if event[2].startswith("14") and furTense:
+                        #if matched event code starts with 14, change the code to "130"
+                        event[2] = "130"
+                        #print(event)
+                        #input(" ")
+                    CodedEvents.append(event)
+
+        if len(CodedEvents)==0: #if no events are found from all above methods, return all matched verbs
+            for verbID in uniq_VerbIDs:
+                events = CodedEventsMap[verbID]
+                for event in events:
+                    CodedEvents.append(event)
+
+
+        
+        CodedEvents.sort(key=lambda x:x[0]+"#"+x[1]+"#"+x[2])
+
         return CodedEvents
 
     def skip_item(self, item):
@@ -3507,6 +3975,7 @@ An instantiated Sentence object
         """
         if item[0] in "~(":
             return 1
+        '''
         if item in ["THE", "A", "AN", "IT", "HE", "THEY",
                                 "HER", "HAS", "HAD", "HAVE", "SOME", "FEW", "THAT"]:
             return 2
@@ -3515,13 +3984,15 @@ An instantiated Sentence object
             return 3
         if item in ["DOLLAR", "DUCAT"]:
             return 5
+        '''
+        
         try:
             int(item)
             return 4
         except:
             return 0
 
-    def petrarch1_verb_pattern_match(self, patlist, upper, lower):
+    def petrarch1_verb_pattern_match(self, patlist, upper, upper_raw, lower, lower_raw):
         """
         ##########################################
         ##
@@ -3585,12 +4056,19 @@ An instantiated Sentence object
                     pathleft.append((path, i, 1))
                     path = path[phrase[i]]
 
+                elif upper_raw[i] in path and not option > 0:
+                    logger.debug("upper matched a raw word %s", upper_raw[i])
+
+                    matchlist.append(upper_raw[i])
+                    pathleft.append((path, i, 1))
+                    path = path[upper_raw[i]]
+
                 # maybe a synset match
                 elif 'synsets' in path and not option > 1:
                     # logger.debug("could be a synset")
                     matchflag = False
                     for synset in path['synsets'].keys():
-                        if phrase[i] in PETRglobals.P1VerbDict['verbs'][synset]:
+                        if synset in PETRglobals.P1VerbDict['verbs'] and (phrase[i] in PETRglobals.P1VerbDict['verbs'][synset] or upper_raw[i] in PETRglobals.P1VerbDict['verbs'][synset]):
                             # logger.debug("found a synset match")
 
                             matchlist.append(synset)
@@ -3687,8 +4165,9 @@ An instantiated Sentence object
 
                     if not '#' in path:
                         return False, {}
-                    logger.debug("Upper pattern matched at end %s", matchlist)
-                    return True, (path['#'], target, source)
+                    #logger.debug("Upper pattern matched at end %s", matchlist)
+                    #logger.debug("source %s, target %s", source,target)
+                    return True, (path['#'], target, source, matchlist)
 
                 if (not i >= len(upper)) and not option > 6:
                     i += 1
@@ -3700,7 +4179,8 @@ An instantiated Sentence object
 
                 elif "#" in path:
                     logger.debug("Upper pattern matched: %s", matchlist)
-                    return True, (path['#'], target, source)
+                    logger.debug("source %s, target %s", source,target)
+                    return True, (path['#'], target, source, matchlist)
 
                 # return to last point of departure
                 elif not pathleft[-1][2] == 0:
@@ -3713,11 +4193,15 @@ An instantiated Sentence object
                         target = p[3]
                     elif option == 4:
                         source = p[3]
+                    else:
+                        target = ""
+                        source = ""
+
                     matchlist.pop()
                     continue
 
                 else:
-                    # logger.debug("no match in upper: %s",
+                    #logger.debug("no match in upper: %s",
                     #              pathleft[-1][0].keys())
                     return False, {}
 
@@ -3726,9 +4210,9 @@ An instantiated Sentence object
                 logger.debug("MATCHED: %s, %s", matchlist, path.keys())
 
             if "#" in path:
-                return True, (path['#'], target, source)
+                return True, (path['#'], target, source, matchlist)
 
-            # logger.debug("NO MATCH IN UPPER")
+            #logger.debug("NO MATCH IN UPPER")
             return False, {}
 
         #################################################
@@ -3760,7 +4244,15 @@ An instantiated Sentence object
                 #logger.debug('checking %s, option: %i,phrase_actor: %s, %s,%s', lower[i],option,phrase_actor,in_NE,path.keys())
 
             skipcheck = self.skip_item(lower[i])
-            #print(lower[i], "skip:", skipcheck, "option:",option)
+            
+            #'''
+            #print("i:", i, lower[i], "skip:", skipcheck, "option:",option, "in_NE", in_NE)
+            #print(path.keys())
+            #print(len(pathleft))
+            #for p in pathleft:
+            #    print(p[0].keys(),p[1],p[2])
+            #'''
+            #input(" ")
 
             # return to last point of departure
 
@@ -3782,6 +4274,7 @@ An instantiated Sentence object
 
             elif i == len(lower) - 1 and not pathleft[-1][2] == 0:
                 # logger.debug("retracing "+str(len(pathleft)))
+                # input(" ")
                 p = pathleft.pop()
                 path = p[0]
                 i = p[1] + 1
@@ -3791,23 +4284,30 @@ An instantiated Sentence object
                 continue
 
             phrase_actors[i] = phrase_actors.setdefault(i, phrase_actor)
-            # print(phrase_actors)
+            #print("phrase_actors:", phrase_actors)
 
-            # check direct word match
-            if lower[i] in path and not option > 0:
+            # check direct word match, if a word is matched, option is set to 1
+            if lower_raw[i] in path and not option > 0:
+                logger.debug("lower matched a raw word %s", lower_raw[i])
+
+                matchlist.append(lower_raw[i])
+                pathleft.append((path, i, 1))
+                path = path[lower_raw[i]]
+            elif lower[i] in path and not option > 0:
                 logger.debug("lower matched a word %s", lower[i])
 
                 matchlist.append(lower[i])
                 pathleft.append((path, i, 1))
                 path = path[lower[i]]
+            
 
-            # maybe a synset match
+            # maybe a synset match, if a synset match is found, option is set to 0, otherwise 2
             elif 'synsets' in path and not option > 1:
                 # logger.debug("could be a synset")
                 matchflag = False
                 for synset in path['synsets'].keys():
-                    if lower[i] in PETRglobals.P1VerbDict['verbs'][synset]:
-                        # logger.debug("found a synset match")
+                    if synset in PETRglobals.P1VerbDict['verbs'] and (lower[i] in PETRglobals.P1VerbDict['verbs'][synset] or lower_raw[i] in PETRglobals.P1VerbDict['verbs'][synset]):
+                        logger.debug("found a synset match")
 
                         matchlist.append(synset)
                         pathleft.append((path, i, 2))
@@ -3820,7 +4320,7 @@ An instantiated Sentence object
                 option = 0 if matchflag else 2
                 continue
 
-            # check for target match
+            # check for target match, if a target is found, option is set to 3
             elif in_NE and (not option > 2) and '+' in path:
                 pathleft.append((path, i, 3, target))
 
@@ -3832,7 +4332,7 @@ An instantiated Sentence object
                 logger.debug("Matching phrase target %s", target)
                 continue
 
-            # check for source match
+            # check for source match, if a source is found, option is set to 4
             elif in_NE and (not option > 3) and '$' in path:
                 pathleft.append((path, i, 4, source))
 
@@ -3844,7 +4344,7 @@ An instantiated Sentence object
                 # logger.debug("Matching phrase source %s", source)
                 continue
 
-            # check for phrase skip
+            # check for phrase skip, if found, option is set to 5
             elif in_NE and (not option > 4) and '^' in path:
                 j = i
                 # logger.debug("Matching phrase skip")
@@ -3864,6 +4364,7 @@ An instantiated Sentence object
                     i += 1
                 continue
 
+            # check for %, if found, option is set to 6
             elif not in_NE and in_NEC and (not option > 5) and '%' in path:
                 # in original code is "upper" why?
                 logger.debug("Matching compound %s %i", lower, i)
@@ -3885,22 +4386,33 @@ An instantiated Sentence object
                 matchlist.append('%')
                 continue
 
-            elif i + 1 < len(lower) and not option > 6:
-                # logger.debug("skipping")
-                option = 0
-                pathleft.append((path, i, 7))
-                i += 1
-                matchlist.append("*")
-                continue
-
             elif '#' in path:
                 logger.debug("Lower pattern matched %s", matchlist)
+                #print(path['#'])
 
                 result, data = upper_match(path['#'])
-                if result:
-                    return data, source, target
+                #print("result:",result,"data:",data)
+                #print("source:",source)
+                #print("target:",target)
 
-                # logger.debug("retracing "+str(len(pathleft)))
+                if result and data[0][0]['code'] != "---":
+                    if target != "" and target not in matchlist:
+                        #print("source:",source)
+                        #print("target:",target)
+                        target = ""
+
+                    #if len(matchlist) in phrase_actors:
+                    #    target = [phrase_actors[len(matchlist)],False]
+                    #else:
+                        #input(" ")
+                        #print("source:",source)
+                        #print("target:",target)
+                        #input(" ")
+                    return data, source, target, matchlist
+
+                #logger.debug("retracing "+str(len(pathleft)))
+                #print("p:",p)
+                #print("option:",option)
                 p = pathleft.pop()
                 path = p[0]
                 i = p[1] + 1
@@ -3909,6 +4421,9 @@ An instantiated Sentence object
                     target = p[3]
                 elif option == 4:
                     source = p[3]
+                else:
+                    target = ""
+                    source = ""
 
                 if not matchlist == []:
                     m = matchlist.pop()
@@ -3916,9 +4431,18 @@ An instantiated Sentence object
                         source = ""
                 continue
 
+            elif i + 1 < len(lower) and not option > 6:
+                #logger.debug("4386: skipping")
+                option = 0
+                pathleft.append((path, i, 7))
+                i += 1
+                matchlist.append("*")
+                continue
+
             elif not pathleft[-1][2] == 0:
-                # logger.debug("retracing "+str(len(pathleft)))
+                #logger.debug("4438 retracing "+str(len(pathleft)))
                 p = pathleft.pop()
+                #print(p)
                 path = p[0]
                 i = p[1] + 1
                 option = p[2]
@@ -3926,18 +4450,23 @@ An instantiated Sentence object
                     target = p[3]
                 elif option == 4:
                     source = p[3]
+                else:
+                    target = ""
+                    source = ""
+
                 matchlist.pop()
                 continue
 
             else:
-                # logger.debug("no match in lower %s", pathleft.keys())
+                logger.debug("no match in lower %s", pathleft.keys())
                 phrase_return = False
                 break
 
             i += 1
             option = 0
+            
 
-        return {}, "", ""
+        return {}, "", "", []
 
     def find_target(self, LowerSeq, TargetLoc):
         """
@@ -3974,6 +4503,7 @@ An instantiated Sentence object
         return TargetLoc
 
     def find_source(self, UpperSeq, LowerSeq, Src, Trg):
+        #improvement needed 2018.10.24
         """
         Assign SourceLoc to the first coded or compound (NE in the UpperSeq; if
         neither found then first (NE with --- code Note that we are going through
@@ -3986,30 +4516,43 @@ An instantiated Sentence object
         """
         SourceLoc = Src
         kseq = 0
+        #print("UPPERSEQ:",UpperSeq)
         # print(LowerSeq[Trg[0]])
         in_NEC = False
         in_NE = False
         while kseq < len(UpperSeq):
             #print(UpperSeq[kseq])
+            #print(kseq,UpperSeq[kseq],"in_NE:",in_NE,"in_NEC:",in_NEC)
             if "~NEC" in UpperSeq[kseq]:
                 in_NEC = not in_NEC
             elif "~NE" in UpperSeq[kseq]:
                 in_NE = not in_NE
 
             if in_NEC and '(NEC' in UpperSeq[kseq]: # and not UpperSeq[kseq].endswith(LowerSeq[Trg[0]].split('>')[1]):
-                SourceLoc = [kseq, True]
-                return SourceLoc
+                #SourceLoc = [kseq, True]
+                #return SourceLoc
+                temp = [kseq, True]
+                if temp != Trg:
+                    SourceLoc = temp
+                    return SourceLoc
 
             if in_NE and not in_NEC and '(NE' in UpperSeq[kseq] and ('>---' not in UpperSeq[kseq]): #and not UpperSeq[kseq].endswith(LowerSeq[Trg[0]].split('>')[1]):
 
-                SourceLoc = [kseq, True]
-                return SourceLoc
+                #SourceLoc = [kseq, True]
+                temp = [kseq, True]
+                if temp != Trg:
+                    SourceLoc = temp
+                    return SourceLoc
             kseq += 1
+        
         kseq = 0
         while kseq < len(UpperSeq):
             if ('(NE' in UpperSeq[kseq]): # and not UpperSeq[kseq].endswith(LowerSeq[Trg[0]].split('>')[1]):
-                SourceLoc = [kseq, True]
-                return SourceLoc
+                #SourceLoc = [kseq, True]
+                temp = [kseq, True]
+                if temp != Trg:
+                    SourceLoc = temp
+                    return SourceLoc
             kseq += 1
         return SourceLoc
 
@@ -4028,21 +4571,27 @@ An instantiated Sentence object
             nodeID = node[0]
             attrs = node[1]
 
-            if 'pos' in attrs and attrs['pos'] in ['NOUN', 'PROPN']:
+            if 'pos' in attrs and attrs['pos'] in ['NOUN', 'PROPN', 'ADJ']:
 
                 found = False
                 predecessors = self.udgraph.predecessors(nodeID)
                 for predecessor in predecessors:
-                    if 'relation' in self.udgraph[predecessor][nodeID] and self.udgraph[predecessor][nodeID]['relation'] in ['nsubj', 'obj', 'nmod', 'obl', 'dobj', 'iobj', 'nsubjpass', 'nsubj:pass']:
+                    if 'relation' in self.udgraph[predecessor][nodeID] and self.udgraph[predecessor][nodeID]['relation'] in ['nsubj', 'obj', 'nmod', 'obl', 'dobj', 'iobj', 'nsubjpass', 'nsubj:pass', 'amod']:
+                    #if 'relation' in self.udgraph[predecessor][nodeID] and self.udgraph[predecessor][nodeID]['relation'] in ['nsubj', 'obj', 'nmod', 'obl', 'dobj', 'iobj', 'nsubjpass', 'nsubj:pass'] and self.udgraph.nodes[predecessor]['pos'] in ["VERB", "ADJ"]:
                         found = True
                         break
 
                 if found:
                     noun = self.get_nounPharse(nodeID)
-                    nouns.append(noun)
+                    if len(noun.npIDs)>0:
+                        nouns.append(noun)
+                    #print("noun:",nodeID,noun.text,noun.npIDs)
 
-                    conj_nouns = self.get_conj_noun_for_petrarch1(nodeID, noun) 			
-                    nouns.extend(conj_nouns)
+                    conj_nouns = self.get_conj_noun_for_petrarch1(nodeID, noun)
+                    for conj_noun in conj_nouns:
+                        if len(conj_noun.npIDs)>0:
+                            nouns.append(conj_noun)			
+                    #nouns.extend(conj_nouns)
 
                     if conj_nouns:
                         ids = []
@@ -4053,13 +4602,16 @@ An instantiated Sentence object
                         compound_nouns.append((ids[0], ids[-1])) #start_idx and end_idx of compound noun phrase
                         #print("compound:", (ids[0], ids[-1]))
 
+                    #input(" ")
         
         for noun in nouns:
+            #print("noun:",noun.head,noun.text)
             noun.get_meaning()
             noun.meaning = ["---"] if noun.meaning == [] else noun.meaning
             logger.debug("noun: " + noun.head + " code: " +
                                  (("#").join(noun.meaning) if noun.meaning != None else '-'))
-
+            #if len(noun.meaning)> 1:
+            #    input(" ")
         return nouns, compound_nouns
 
     def get_conj_noun_for_petrarch1(self, nodeID, noun):
@@ -4076,8 +4628,8 @@ An instantiated Sentence object
         """
         conj_noun = []
         for successor in self.udgraph.successors(nodeID):
-            if(self.udgraph[nodeID][successor]['relation'] == 'conj'):
-                # conj_noun.append(self.get_nounPharse(successor))
+            if self.udgraph[nodeID][successor]['relation'] in ['conj']: #,'appos'
+                conj_noun.append(self.get_nounPharse(successor))
                 conjnouns = self.get_nounPharse(successor)
 
                 for conjnoun in [conjnouns]:
@@ -4101,6 +4653,7 @@ An instantiated Sentence object
 
                     nntext = (' ').join(npTokens)
                     conjnoun.text = nntext
+                    #print("conj:",nntext)
 
                     conj_noun.append(conjnoun)
 

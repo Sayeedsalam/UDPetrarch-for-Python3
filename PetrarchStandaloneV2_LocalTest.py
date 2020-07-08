@@ -75,7 +75,7 @@ try:
 
     events = formatter.format(event_dict, additional_info)
 
-    print "Number of events ", str(len(events))
+    print(("Number of events ", str(len(events))))
 
     #mongo_id = ObjectId(str_id)
     db_value['petrarch_ud'] = petr_converter.encode(event_dict)
@@ -88,12 +88,12 @@ try:
     #db.processed_stories_ud.insert(db_value, check_keys=False)
 
     for event in events:
-        print "========"
-        print event
+        print("========")
+        print(event)
         #db.phoenix_events_ud.insert(event, check_keys=False)
 
-except Exception, e:
-    print "EXCEPTION ", str(e)
+except Exception as e:
+    print(("EXCEPTION ", str(e)))
     issue_article = {}
     issue_article['article'] = ""
     issue_article['issue'] = str(e)

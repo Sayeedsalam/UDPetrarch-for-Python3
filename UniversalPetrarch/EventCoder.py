@@ -2,7 +2,7 @@
 
 import logging
 import time
-import utilities, PETRglobals, PETRreader, petrarch_ud
+from UniversalPetrarch import utilities, PETRglobals, PETRreader, petrarch_ud
 
 
 class EventCoder:

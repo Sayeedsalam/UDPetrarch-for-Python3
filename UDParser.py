@@ -28,7 +28,7 @@ class UDParser(object):
 
     def __init__(self, lang="en"):
         model_file = "/Users/sxs149331/PycharmProjects/UniversalPetrarch-master/"+self.models[lang]
-        print model_file
+        print(model_file)
         self.model = Model.load(model_file)
         if not self.model:
             sys.stderr.write("Model Loading Failed")
@@ -50,3 +50,8 @@ class UDParser(object):
             result.append(line)
 
         return ("\n").join(result)
+
+
+parser = UDParser()
+
+print((parser.parse("How are you?")))

@@ -1,9 +1,10 @@
-INFO 2019-04-30 14:05:48,554: Running
-INFO 2019-04-30 14:05:48,554: Using Config file: PETR_config.ini
-INFO 2019-04-30 14:05:48,556: Reading PETR.Internal.Coding.Ontology.txt
-INFO 2019-04-30 14:05:48,558: Reading CAMEO.2.0.txt
-INFO 2019-04-30 14:05:52,011: Reading Phoenix.agents.txt
+INFO 2020-07-08 14:37:48,605: Running
+INFO 2020-07-08 14:37:48,605: Using Config file: PETR_config.ini
+INFO 2020-07-08 14:37:48,607: Reading PETR.Internal.Coding.Ontology.txt
+INFO 2020-07-08 14:37:48,610: Reading CAMEO.2.0.txt
+INFO 2020-07-08 14:37:50,659: Reading CAMEO.verbpatterns.150430.txt
+INFO 2020-07-08 14:37:51,802: Reading Phoenix.agents.txt
 
-WARNING 2019-04-30 14:05:52,045: Codes are required for agents in .agents file ; line skipped
-INFO 2019-04-30 14:05:52,050: Reading Phoenix.discards.txt
-INFO 2019-04-30 14:05:52,055: Reading Phoenix.IssueCoding.txt
+WARNING 2020-07-08 14:37:51,834: Codes are required for agents in .agents file ; line skipped
+INFO 2020-07-08 14:37:51,840: Reading Phoenix.discards.txt
+INFO 2020-07-08 14:37:51,845: Reading Phoenix.IssueCoding.txt

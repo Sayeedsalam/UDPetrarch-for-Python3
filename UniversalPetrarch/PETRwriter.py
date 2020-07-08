@@ -26,8 +26,8 @@
 from __future__ import print_function
 from __future__ import unicode_literals
 
-import PETRglobals  # global variables
-import utilities
+from UniversalPetrarch import PETRglobals  # global variables
+from UniversalPetrarch import utilities
 import codecs
 import json
 

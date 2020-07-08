@@ -1,12 +1,16 @@
+# coding=utf-8
+
 import json
 from UDParser import UDParser
 from UniversalPetrarch.EventCoder import EventCoder
 from pprint import pprint
 
 from nltk import sent_tokenize
+import nltk
+nltk.data.path.append("/Volumes/Untitled 2/Users/sayeed")
 
-parser = UDParser()
-event_coder = EventCoder()
+parser = UDParser(lang="en")
+event_coder = EventCoder(config_file="PETR_config.ini")
 
 def parse_ud(corenlp_data):
 
@@ -15,6 +19,7 @@ def parse_ud(corenlp_data):
 
     for entry in entries:
         entry["parse_sentence"] = parser.parse(entry['sentence'])
+    print entry["parse_sentence"]
 
     return corenlp_data
 
@@ -35,6 +40,8 @@ def create_dummy_article(sentences):
 
     return article
 
+
+
 def encode_sentence(sentence):
     article = create_dummy_article(sentence)
     article = parse_ud(article)
@@ -53,20 +60,21 @@ def encode_sentence(sentence):
     return event_set
 
 
+if __name__ == "__main__":
 
-summary = "Assailants detonated an explosive device at an oil holding pool along the Cano Limon - Covenas pipeline in Convencion municipality, North Santander department, Colombia. As a result of the blast, the pool was damaged and local residents evacuated the area. This was one of four holding pools attacked in the area on this day. No group claimed responsibility for the incident; however, sources attributed the attack to National Liberation Army of Colombia (ELN)."
+    summary = "The UN Security Council on Tuesday unanimously approved a United States’ resolution on the recent deal between the U.S. and the Afghan Taliban, a rare endorsement of an agreement with a militant group."
+    print summary
 
+    summary_sentences = sent_tokenize(summary)
+    print(type(summary_sentences))
 
-summary_sentences = sent_tokenize(summary)
-print(type(summary_sentences))
+    events = encode_sentence(summary_sentences)
 
-events = encode_sentence(summary_sentences)
+    for event_dict in events:
+        pprint(event_dict)
 
-for event_dict in events:
-    pprint(event_dict)
+        for key in event_dict["events"]:
 
-    for key in event_dict["events"]:
-
-        print event_dict['triplets'][key]["triple"][0]
-        print event_dict['triplets'][key]["triple"][1]
-        print event_dict['triplets'][key]["triple"][2]
+            print event_dict['triplets'][key]["source_text"]
+            print event_dict['triplets'][key]["verb_text"]
+            print event_dict['triplets'][key]["target_text"]

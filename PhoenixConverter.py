@@ -4,7 +4,7 @@ import re
 import logging
 import json
 import requests
-import urllib
+import urllib.request, urllib.parse, urllib.error
 from datetime import datetime
 
 #from mediameter.cliff import Cliff
@@ -23,7 +23,7 @@ class PhoenixConverter:
         self.geo_port = geo_port
         self.iso_country_code = phoenix_data.get("iso_country_code")
 
-        print self.primary_agent
+        print((self.primary_agent))
 
 
 
@@ -61,17 +61,17 @@ class PhoenixConverter:
         try:
             event_quad = self.quad_conversion[root_code]
         except KeyError:
-            print('Bad event: {}'.format(event))
+            print(('Bad event: {}'.format(event)))
             event_quad = ''
 
         try:
             goldstein = self.goldstein_scale[event]
         except KeyError:
-            print('\nMissing Goldstein Value: {}'.format(event[3]))
+            print(('\nMissing Goldstein Value: {}'.format(event[3])))
             try:
                 goldstein = self.goldstein_scale[root_code]
             except KeyError:
-                print('Bad event: {}'.format(event))
+                print(('Bad event: {}'.format(event)))
                 goldstein = ''
         return root_code, event_quad, goldstein
 
@@ -129,7 +129,7 @@ class PhoenixConverter:
         logger = logging.getLogger('pipeline_log')
         locationDetails = {'lat': '', 'lon': '', 'placeName': '', 'countryCode': '', 'stateName': '', 'restype' : ''}
 
-        request_url = "http://{}:{}/CLIFF-2.3.0/parse/text?q={}".format(self.geo_ip, self.geo_port, urllib.quote_plus(text.encode('utf8')))
+        request_url = "http://{}:{}/CLIFF-2.3.0/parse/text?q={}".format(self.geo_ip, self.geo_port, urllib.parse.quote_plus(text.encode('utf8')))
 
 
         cliffDict = requests.get(request_url).json()
@@ -137,7 +137,7 @@ class PhoenixConverter:
         try:
             focus = cliffDict['results']['places']['focus']
         except:
-            print "ISSUE"
+            print ("ISSUE")
             return locationDetails
 
         if not focus:
@@ -159,8 +159,8 @@ class PhoenixConverter:
 
                 locationDetails = {'lat': lat, 'lon': lon, 'placeName': placeName, 'restype': 'city', 'countryCode': countryCode, 'stateName': stateName}
                 return locationDetails
-            except Exception, e:
-                print str(e)
+            except Exception as e:
+                print(str(e))
                 return locationDetails
         elif (len(focus['states']) > 0) & (len(focus['cities']) == 0):
             try:
@@ -185,7 +185,7 @@ class PhoenixConverter:
 
     def format(self, event_dict, additional_info={}):
         petrarch = event_dict
-        dateId = petrarch.keys()
+        dateId = list(petrarch.keys())
         date8 = re.findall('[0-9]+', dateId[0])[0]
         sents = petrarch[dateId[0]]['sents']
 

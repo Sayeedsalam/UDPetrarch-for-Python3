@@ -3,15 +3,15 @@
 import io
 import re
 import os
-import sys
+#import sys
 import math  # required for ordinal date calculations
 import logging
 import xml.etree.ElementTree as ET
 from functools import reduce
-import sys
-if sys.version[0] == '2':
-    reload(sys)
-    sys.setdefaultencoding("utf-8")
+# import sys
+# if sys.version[0] == '2':
+#     reload(sys)
+#     sys.setdefaultencoding("utf-8")
 try:
     from ConfigParser import ConfigParser
 except ImportError:
@@ -73,7 +73,7 @@ def parse_Config(config_path):
         else:
             return False
 
-    print('\n', end=' ')
+    print('\n')
     parser = ConfigParser()
 #		logger.info('Found a config file in working directory')
 #	print "pc",PETRglobals.ConfigFileName
@@ -198,7 +198,7 @@ def parse_Config(config_path):
                 "Error in config.ini Option: comma_*  value must be an integer")
             raise
         print("Comma-delimited clause elimination:")
-        print("Initial :", end=' ')
+        print("Initial :")
         if PETRglobals.CommaBMax == 0:
             print("deactivated")
         else:
@@ -207,7 +207,7 @@ def parse_Config(config_path):
                 PETRglobals.CommaBMin,
                 "   max =",
                 PETRglobals.CommaBMax)
-        print("Internal:", end=' ')
+        print("Internal:")
         if PETRglobals.CommaMax == 0:
             print("deactivated")
         else:
@@ -216,7 +216,7 @@ def parse_Config(config_path):
                 PETRglobals.CommaMin,
                 "   max =",
                 PETRglobals.CommaMax)
-        print("Terminal:", end=' ')
+        print("Terminal:")
         if PETRglobals.CommaEMax == 0:
             print("deactivated")
         else:
@@ -415,7 +415,7 @@ def get_attribute(targattr):
                 PETRglobals.AttributeList.index(targattr) + 1]
         )
     else:
-        raise MissingAttr
+        raise AttributeError
         return ""
 
 
@@ -1716,7 +1716,7 @@ def show_verb_dictionary(filename=''):
 
     else:
         for locword, loclist in PETRglobals.VerbDict.items():
-            print(locword, end=' ')
+            print(locword)
             if loclist[0]:
                 if len(loclist) > 2:
                     print('::\n', loclist[1:])   # pattern list
